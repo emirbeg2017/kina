@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from html import escape
 import json
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -37,6 +38,8 @@ COPY = {
     "boundary": ("Feature indexes, 0–100. A larger shape is not better health. No overall score.", "0〜100の特徴指数です。図形の大きさは健康の良し悪しを示しません。総合点はありません。", "0–100 特征指数。图形越大不代表越健康，不设综合总分。"),
     "missing": ("Gaps mean no valid measurement. Missing values are not zero; emotion-word defaults are not measured mood.", "空白は有効な測定がない項目です。0点ではなく、感情語の既定値は気分の測定ではありません。", "留空表示没有有效测量，不是零分；情绪词默认值不代表真实情绪。"),
     "detail": ("All eight features and their meaning", "8つの特徴とその意味", "八项指标与含义"),
+    "speech_features": ("Speech Features", "音声の特徴", "语音特征"),
+    "speech_features_hint": ("Select a feature to see what it describes.", "特徴を選択すると、内容を確認できます。", "选择一项特征，查看它的含义。"),
     "feature": ("Feature", "特徴", "指标"),
     "unavailable": ("Not measured", "測定なし", "无有效测量"),
     "change": ("Difference", "差", "差异"),
@@ -82,6 +85,22 @@ def radar_document(data: dict, language: str, show_reference: bool) -> str:
     new ResizeObserver(draw).observe(svg);draw();</script></body></html>""".replace("PAYLOAD", safe_json)
 
 
+def _numeric_raw_metrics(raw_metric: str | None) -> dict[str, float]:
+    """Parse numeric key/value metrics persisted with a feature score."""
+    metrics = {}
+    for item in str(raw_metric or "").split(";"):
+        key, separator, raw_value = item.partition("=")
+        if not separator:
+            continue
+        try:
+            value = float(raw_value.strip())
+        except ValueError:
+            continue
+        if key.strip() and math.isfinite(value):
+            metrics[key.strip()] = value
+    return metrics
+
+
 def render_result(records: list[dict], language: str) -> None:
     c = lambda key: ui_copy(key, language)
     st.title(c("title"))
@@ -114,6 +133,75 @@ def render_result(records: list[dict], language: str) -> None:
     with st.expander(c("method")):
         st.caption(" · ".join(data["key"]))
         st.caption(c("reference_note"))
+    with st.expander(c("speech_features")):
+        st.caption(c("speech_features_hint"))
+        selected_feature_key = f"selected_speech_feature_{data['session_id']}"
+        if selected_feature_key not in st.session_state:
+            st.session_state[selected_feature_key] = next(
+                (name for name, value in zip(data["features"], data["current"]) if value is not None),
+                data["features"][0],
+            )
+        selected_feature = st.session_state[selected_feature_key]
+        session_rows = {}
+        for row in records:
+            session_rows.setdefault(int(row["session_id"]), {})[row["feature_name"]] = row
+        for start in range(0, len(data["features"]), 4):
+            feature_columns = st.columns(4)
+            for column, (name, value) in zip(
+                feature_columns,
+                zip(data["features"][start : start + 4], data["current"][start : start + 4]),
+            ):
+                label = display_feature_name(name, language)
+                with column:
+                    with st.container(border=True):
+                        if st.button(
+                            label,
+                            key=f"speech_feature_{data['session_id']}_{name}",
+                            type="primary" if name == selected_feature else "secondary",
+                        ):
+                            st.session_state[selected_feature_key] = name
+                            selected_feature = name
+                        if value is None:
+                            st.caption(c("unavailable"))
+                        else:
+                            st.markdown(f"**{value:g} / 100**")
+                            st.progress(value / 100)
+
+        st.markdown(f"#### {display_feature_name(selected_feature, language)}")
+        st.write(feature_explanation(selected_feature, language))
+        selected_index = data["features"].index(selected_feature)
+        current_score = data["current"][selected_index]
+        reference_score = data["reference"][selected_index]
+        this_recording, reference_recording = st.columns(2)
+        this_recording.metric(
+            c("current"), c("unavailable") if current_score is None else f"{current_score:g} / 100"
+        )
+        reference_recording.metric(
+            c("reference"), c("unavailable") if reference_score is None else f"{reference_score:g} / 100"
+        )
+
+        current_row = session_rows.get(data["session_id"], {}).get(selected_feature, {})
+        current_metrics = _numeric_raw_metrics(current_row.get("raw_metric"))
+        reference_metric_rows = [
+            _numeric_raw_metrics(
+                session_rows.get(session_id, {}).get(selected_feature, {}).get("raw_metric")
+            )
+            for session_id in data["reference_ids"]
+        ]
+        metric_rows = []
+        for key, value in current_metrics.items():
+            reference_values = [row[key] for row in reference_metric_rows if key in row]
+            row = {c("feature"): key.replace("_", " ").title(), c("current"): value}
+            if len(data["reference_ids"]) == 3 and len(reference_values) == 3:
+                row[c("reference")] = sum(reference_values) / 3
+            metric_rows.append(row)
+        if metric_rows:
+            details = pd.DataFrame(metric_rows).set_index(c("feature"))
+            st.markdown("**Details**")
+            st.bar_chart(details)
+            st.dataframe(details, width="stretch")
+        else:
+            st.info(c("unavailable"))
     if st.button(c("next"), type="primary", use_container_width=True):
         st.session_state.pending_primary_view = "trends"
         st.rerun()
