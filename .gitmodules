@@ -1,6 +1,6 @@
 [submodule "frontend"]
 	path = frontend
-	url = https://github.com/usekina/kizunafront.git
+	url = https://github.com/emirbeg2017/kizunafront.git
 [submodule "backend"]
 	path = backend
-	url = https://github.com/usekina/kizunaback.git
+	url = https://github.com/emirbeg2017/kizunaback.git
