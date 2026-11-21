@@ -1,0 +1,10 @@
+**/.git
+**/.env
+**/.env.*
+**/.local-data
+**/node_modules
+**/uploads
+**/__pycache__
+**/.pytest_cache
+**/data
+frontend/dist
